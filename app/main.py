@@ -1,106 +1,105 @@
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, render_template, redirect, url_for, request, jsonify
+from flask_bootstrap import Bootstrap
+from flask_marshmallow import Marshmallow
+from flask_restful import abort
 from flask_sqlalchemy import SQLAlchemy
-import random
+from flask_wtf import FlaskForm
+from wtforms import StringField, SubmitField
+from wtforms.validators import DataRequired, URL
+from flask_ckeditor import CKEditor, CKEditorField
+from datetime import date
+
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = '8BYkEfBA6O6donzWlSihBXox7C0sKR6b'
+ckeditor = CKEditor(app)
+Bootstrap(app)
 
-##CREATE DB
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cafes.db'
+##CONNECT TO DB
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///botzletics.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+ma = Marshmallow(app)  # new
 
 
-##CREATE TABLE
-class Cafe(db.Model):
+##CONFIGURE TABLE
+class BotzleticsDb(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(250), unique=True, nullable=False)
-    map_url = db.Column(db.String(500), nullable=False)
-    img_url = db.Column(db.String(500), nullable=False)
-    location = db.Column(db.String(250), nullable=False)
-    seats = db.Column(db.String(250), nullable=False)
-    has_toilet = db.Column(db.Boolean, nullable=False)
-    has_wifi = db.Column(db.Boolean, nullable=False)
-    has_sockets = db.Column(db.Boolean, nullable=False)
-    can_take_calls = db.Column(db.Boolean, nullable=False)
-    coffee_price = db.Column(db.String(250), nullable=True)
-
-    def to_dict(self):
-        return {column.name: getattr(self, column.name) for column in self.__table__.columns}
+    date = db.Column(db.String(250), nullable=False)
+    name = db.Column(db.String(250), nullable=False)
 
 
-@app.route("/")
-def home():
-    return render_template("index.html")
+db.create_all()
 
 
-@app.route("/random")
-def get_random_cafe():
-    cafes = db.session.query(Cafe).all()
-    random_cafe = random.choice(cafes)
-    return jsonify(cafe=random_cafe.to_dict())
+class WorkoutSchema(ma.Schema):
+    class Meta:
+        fields = ("id", "name", "date")
 
 
-@app.route("/all")
-def get_all_cafes():
-    cafes = db.session.query(Cafe).all()
-    return jsonify(cafes=[cafe.to_dict() for cafe in cafes])
+
+workout_schema = WorkoutSchema()
+workouts_schema = WorkoutSchema(many=True)
 
 
-@app.route("/search")
-def get_cafe_at_location():
-    query_location = request.args.get("loc")
-    cafe = db.session.query(Cafe).filter_by(location=query_location).first()
-    if cafe:
-        return jsonify(cafe=cafe.to_dict())
+@app.route('/')
+def get_all_workouts():
+    workouts = BotzleticsDb.query.all()
+    return jsonify(workouts_schema.dump(workouts))
+
+@app.route("/workout/<int:workout_id>")
+def get_workout(workout_id):
+    if BotzleticsDb.query.get(workout_id):
+        workout = BotzleticsDb.query.get(workout_id)
+        return jsonify(workout_schema.dump(workout))
     else:
-        return jsonify(error={"Not Found": "Sorry, we don't have a cafe at that location."}), 404
+        abort(404)
 
 
-@app.route("/add", methods=["POST"])
-def post_new_cafe():
-    new_cafe = Cafe(
-        name=request.form.get("name"),
-        map_url=request.form.get("map_url"),
-        img_url=request.form.get("img_url"),
-        location=request.form.get("loc"),
-        has_sockets=bool(request.form.get("sockets")),
-        has_toilet=bool(request.form.get("toilet")),
-        has_wifi=bool(request.form.get("wifi")),
-        can_take_calls=bool(request.form.get("calls")),
-        seats=request.form.get("seats"),
-        coffee_price=request.form.get("coffee_price"),
+@app.route("/new-workout", methods=["POST"])
+def add_new_workout():
+    req_data = request.get_json()
+    workout = BotzleticsDb(
+        name=req_data['name'],
+        date=date.today().strftime("%B %d, %Y")
     )
-    db.session.add(new_cafe)
+    db.session.add(workout)
     db.session.commit()
-    return jsonify(response={"success": "Successfully added the new cafe."})
+    return 'Submitted'
+
+@app.errorhandler(404)
+def page_not_found(error):
+   return {'message' : 'Ruh Roh'}
 
 
-@app.route("/update-price/<int:cafe_id>", methods=["PATCH"])
-def patch_new_price(cafe_id):
-    new_price = request.args.get("new_price")
-    cafe = db.session.query(Cafe).get(cafe_id)
-    if cafe:
-        cafe.coffee_price = new_price
-        db.session.commit()
-        return jsonify(response={"success": "Successfully updated the price."}), 200
-    else:
-        return jsonify(error={"Not Found": "Sorry a cafe with that id was not found in the database."}), 404
+# @app.route("/edit-post/<int:post_id>", methods=["GET", "POST"])
+# def edit_post(post_id):
+#     post = BotzleticsDb.query.get(post_id)
+#     edit_form = CreatePostForm(
+#         title=post.title,
+#         subtitle=post.subtitle,
+#         img_url=post.img_url,
+#         author=post.author,
+#         body=post.body
+#     )
+#     if edit_form.validate_on_submit():
+#         post.title = edit_form.title.data
+#         post.subtitle = edit_form.subtitle.data
+#         post.img_url = edit_form.img_url.data
+#         post.author = edit_form.author.data
+#         post.body = edit_form.body.data
+#         db.session.commit()
+#         return redirect(url_for("show_post", post_id=post.id))
+#     return render_template("make-post.html", form=edit_form, is_edit=True)
 
 
-@app.route("/report-closed/<int:cafe_id>", methods=["DELETE"])
-def delete_cafe(cafe_id):
-    api_key = request.args.get("api-key")
-    if api_key == "TopSecretAPIKey":
-        cafe = db.session.query(Cafe).get(cafe_id)
-        if cafe:
-            db.session.delete(cafe)
-            db.session.commit()
-            return jsonify(response={"success": "Successfully deleted the cafe from the database."}), 200
-        else:
-            return jsonify(error={"Not Found": "Sorry a cafe with that id was not found in the database."}), 404
-    else:
-        return jsonify(error={"Forbidden": "Sorry, that's not allowed. Make sure you have the correct api_key."}), 403
+# @app.route("/delete/<int:post_id>")
+# def delete_post(post_id):
+#     post_to_delete = BotzleticsDb.query.get(post_id)
+#     db.session.delete(post_to_delete)
+#     db.session.commit()
+#     return redirect(url_for('get_all_posts'))
 
 
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=5000)
